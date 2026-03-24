@@ -1,5 +1,5 @@
 # Same as Dockerfile.5tower.unified but bundles exports/multitower_sale_5towers_best
-# (housing → Alec + meta). Build after: train_alec + build_best_config_model.py
+# (housing → CatBoost replica + meta). Build after: train_catboost_model_replica + build_best_config_model.py
 FROM python:3.11-slim
 
 WORKDIR /app

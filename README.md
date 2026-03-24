@@ -2,15 +2,15 @@
 
 This repository is a **sanitized** snapshot: no real API keys, passwords, Snowflake account URLs, phone numbers, or customer data. Copy `.env.example` to `.env` and fill in your own values; never commit `.env` or private keys.
 
-This directory is a **complete** bundle for training, optional 22k/validatemarch evaluation, Snowflake SPCS deploy, and endpoint testing. A sibling folder of loose `scripts/` alone is **not** sufficient: those scripts expect a sibling `ml/` package and root-level training/deploy assets. This bundle includes `tests/test_route_smart.py`, `optional_scripts/` (22k pipelines), `requirements-training.txt`, `Dockerfile.5tower.unified.best` + `deploy_5tower_snowflake_best.py`, and `alecmodel/README.txt` for required metadata.
+This directory is a **complete** bundle for training, optional 22k/validatemarch evaluation, Snowflake SPCS deploy, and endpoint testing. A sibling folder of loose `scripts/` alone is **not** sufficient: those scripts expect a sibling `ml/` package and root-level training/deploy assets. This bundle includes `tests/test_route_smart.py`, `optional_scripts/` (22k pipelines), `requirements-training.txt`, `Dockerfile.5tower.unified.best` + `deploy_5tower_snowflake_best.py`, and `catboost_metadata/README.txt` for required reference metadata.
 
 ---
 
-This folder contains the files needed to train the Smart Routing 5-tower model (with optional Alec tower) and deploy it to Snowflake SPCS.
+This folder contains the files needed to train the Smart Routing 5-tower model (with optional CatBoost replica tower) and deploy it to Snowflake SPCS.
 
 ## What This Is
 
-- **Model**: 5-tower sale prediction (demographics, lead, housing, insurance, culture) with a meta logistic regression. The deployed “best” configuration replaces the housing tower with the Alec (CatBoost) model.
+- **Model**: 5-tower sale prediction (demographics, lead, housing, insurance, culture) with a meta logistic regression. The deployed “best” configuration replaces the housing tower with a **CatBoost** replica tower (trained via `train_catboost_model_replica.py`).
 - **Server**: Flask app that exposes `POST /route` (phone + lead_source → TransUnion lookup → age gate → 5-tower inference → prediction + tier) and `POST /predict`, `GET /health`. Runs on port 8080 for Snowflake SPCS.
 - **Age gate**: Reroute only when age > 85 (ABOVE_85). No floor.
 
@@ -31,9 +31,9 @@ SMARTROUTINGDOCS/
 ├── deploy_5tower_snowflake.py        # Build image, push to Snowflake, create SPCS service
 ├── Dockerfile.5tower.unified         # Docker image for the inference server
 ├── train_multitower_sale_5towers.py  # Train base 5-tower model
-├── build_best_config_model.py        # Build best config (housing → Alec) for deployment
-├── train_alec_model_replica.py       # Train Alec (CatBoost) replica
-├── compare_ks_with_alec.py            # Optional: sweep configs to pick best tower + meta
+├── build_best_config_model.py        # Build best config (housing → CatBoost tower) for deployment
+├── train_catboost_model_replica.py   # Train CatBoost replica tower
+├── compare_ks_with_catboost.py       # Optional: sweep configs to pick best tower + meta
 ├── inference_server/
 │   ├── app_5tower_unified.py         # Flask app: /route, /predict, /health
 │   └── requirements-5tower-unified.txt
@@ -51,7 +51,7 @@ SMARTROUTINGDOCS/
 After training, the following are **produced** (not in this folder; created in the same directory as the scripts when run from SMARTROUTINGDOCS or from the parent repo):
 
 - `exports/multitower_sale_5towers/` — base 5-tower export
-- `exports/alec_model_replica/` — Alec model (and optional metadata)
+- `exports/catboost_model_replica/` — CatBoost replica tower (and optional metadata)
 - `exports/multitower_sale_5towers_best/` — best config used by the Docker image and deploy script
 
 ---
@@ -81,22 +81,22 @@ python train_multitower_sale_5towers.py
 
 This writes to `exports/multitower_sale_5towers/` (tower models, meta model, lookups, threshold).
 
-### 2.2 Alec model replica (optional but required for “best” config)
+### 2.2 CatBoost replica tower (optional but required for “best” config)
 
-Requires Alec metadata at `alecmodel/close_rate_model_v4_metadata.pkl` (feature list and cat cols). If you have it:
+Requires reference metadata at `catboost_metadata/close_rate_model_v4_metadata.pkl` (feature list and cat cols). If you have it:
 
 ```bash
-python train_alec_model_replica.py
+python train_catboost_model_replica.py
 ```
 
-This writes to `exports/alec_model_replica/` (e.g. `model.pkl`, `metadata.pkl`).
+This writes to `exports/catboost_model_replica/` (e.g. `model.pkl`, `metadata.pkl`).
 
 ### 2.3 Optional: Compare configurations (pick best tower + meta)
 
-If you want to re-run the KS sweep that chose “replace housing with Alec” and meta hyperparameters:
+If you want to re-run the KS sweep that chose “replace housing with CatBoost” and meta hyperparameters:
 
 ```bash
-python compare_ks_with_alec.py
+python compare_ks_with_catboost.py
 ```
 
 Inspect the output CSVs and then either keep the current best config or change the constants in `build_best_config_model.py` to match the chosen config.
@@ -107,11 +107,11 @@ Inspect the output CSVs and then either keep the current best config or change t
 python build_best_config_model.py
 ```
 
-This reads the base 5-tower export and the Alec replica, builds the best configuration (replace housing with Alec; meta: saga, l1, C=0.050), and writes **`exports/multitower_sale_5towers_best/`**. That directory must contain at least:
+This reads the base 5-tower export and the CatBoost replica, builds the best configuration (replace housing with CatBoost tower; meta: saga, l1, C=0.050), and writes **`exports/multitower_sale_5towers_best/`**. That directory must contain at least:
 
 - `model.pkl`
-- `alec_model.pkl`
-- `alec_metadata.pkl` (or equivalent)
+- `catboost_model.pkl` (or legacy `alec_model.pkl`)
+- `catboost_metadata.pkl` (or legacy `alec_metadata.pkl`)
 - `lookups/` (all JSON label encodings)
 - `threshold.json`
 - `config_metadata.json`
@@ -150,7 +150,7 @@ python deploy_5tower_snowflake.py
 
 The script will:
 
-1. **Build** the Docker image from `Dockerfile.5tower.unified` (copies `inference_server/`, `ml/`, and `exports/multitower_sale_5towers_best/`).
+1. **Build** the Docker image from `Dockerfile.5tower.unified` or `Dockerfile.5tower.unified.best` (copies `inference_server/`, `ml/`, and the matching `exports/` tree).
 2. **Tag and push** the image to the Snowflake image registry for your database/schema.
 3. **Create or replace** the SPCS service (e.g. `SMART_ROUTING_5TOWER_SERVICE`) in the configured compute pool, with public HTTP on port 8080 and a `/health` readiness probe.
 
@@ -185,12 +185,12 @@ From this repo root (with the test script and OAuth key if required):
 |------|--------|
 | 1 | Place `train_global.csv`, `val_global.csv`, `test_global.csv`, `holdout_10pct.csv` in `training_tables/`. |
 | 2 | Run `train_multitower_sale_5towers.py` → `exports/multitower_sale_5towers/`. |
-| 3 | (Optional) Run `train_alec_model_replica.py` → `exports/alec_model_replica/` (requires Alec metadata in `alecmodel/`). |
-| 4 | (Optional) Run `compare_ks_with_alec.py` to re-validate best config. |
+| 3 | (Optional) Run `train_catboost_model_replica.py` → `exports/catboost_model_replica/` (requires metadata in `catboost_metadata/`). |
+| 4 | (Optional) Run `compare_ks_with_catboost.py` to re-validate best config. |
 | 5 | Run `build_best_config_model.py` → `exports/multitower_sale_5towers_best/`. |
 | 6 | Copy `.env.example` to `.env` and set Snowflake + TU variables. |
 | 7 | Run `snow spcs image-registry login` (and have `rsa_key.p8` if needed). |
-| 8 | From repo root, run `python deploy_5tower_snowflake.py`. |
+| 8 | From repo root, run `python deploy_5tower_snowflake.py` (base model) or `python deploy_5tower_snowflake_best.py` (CatBoost best bundle). |
 | 9 | Set TU_USERNAME/TU_PASSWORD on the SPCS service; note the public endpoint URL and test with `test_route_smart.py`. |
 
 This folder plus the generated `exports/multitower_sale_5towers_best/` and your `.env`/`rsa_key.p8` are sufficient to reproduce training and Snowflake deployment of the current Smart Routing server.

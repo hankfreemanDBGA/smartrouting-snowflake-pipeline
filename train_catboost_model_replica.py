@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Train a replica of Alec's model using CatBoost with RFE to maximize validation KS.
-Uses Alec's feature list and trains with CatBoost, selecting features via RFE.
+Train a CatBoost replica tower using CatBoost with RFE to maximize validation KS.
+Uses the reference feature list from metadata and trains with CatBoost, selecting features via RFE.
 """
 import sys
 from pathlib import Path
@@ -27,13 +27,13 @@ except ImportError:
     sys.exit(1)
 
 TARGET = "SALE_MADE_FLAG"
-EXPORT_DIR = REPO_ROOT / "exports" / "alec_model_replica"
+EXPORT_DIR = REPO_ROOT / "exports" / "catboost_model_replica"
 EXPORT_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def _load_alec_features():
-    """Load Alec's model feature list from metadata."""
-    metadata_path = REPO_ROOT / "alecmodel" / "close_rate_model_v4_metadata.pkl"
+def _load_catboost_features():
+    """Load feature list from reference metadata (catboost_metadata/)."""
+    metadata_path = REPO_ROOT / "catboost_metadata" / "close_rate_model_v4_metadata.pkl"
     if not metadata_path.exists():
         print(f"Metadata file not found: {metadata_path}")
         return None, None
@@ -54,7 +54,7 @@ def _fit_catboost(X_train, y_train, cat_features=None, verbose=True):
     if verbose:
         print(f"    CatBoost (n={n_train}, pos={n_pos}, neg={n_neg})")
     
-    # CatBoost parameters similar to Alec's model
+    # CatBoost parameters tuned for replica tower
     model = cb.CatBoostClassifier(
         iterations=100,
         depth=6,
@@ -520,13 +520,13 @@ def _rfe_find_best_100_features(X_train_array, y_train, X_val_array, y_val, feat
 
 
 def main():
-    print("Loading Alec's feature list...")
-    alec_features, alec_cat_features = _load_alec_features()
-    if alec_features is None:
-        print("Failed to load Alec's features")
+    print("Loading reference feature list from metadata...")
+    cb_features, cb_cat_features = _load_catboost_features()
+    if cb_features is None:
+        print("Failed to load features from catboost_metadata")
         return 1
     
-    print(f"Found {len(alec_features)} features ({len(alec_cat_features) if alec_cat_features else 0} categorical)")
+    print(f"Found {len(cb_features)} features ({len(cb_cat_features) if cb_cat_features else 0} categorical)")
     
     print("\nLoading data from tuappend.csv...")
     # Load directly from tuappend.csv to get all features
@@ -599,7 +599,7 @@ def main():
         test_df = df_test
         print(f"  Train: {len(train_df):,}, Val: {len(val_df):,}, Test: {len(test_df):,}")
     
-    # Map common aliases (Alec's feature names -> our column names)
+    # Map common aliases (metadata feature names -> our column names)
     feature_alias_map = {
         "TU_GENDER": "GENDER",
         "TU_STATE": "STATE",
@@ -608,10 +608,10 @@ def main():
     
     # Filter to features that exist in our data (with aliases)
     available_features = []
-    feature_mapping = {}  # Alec feature -> actual column name
+    feature_mapping = {}  # metadata feature -> actual column name
     missing_features = []
     
-    for feat in alec_features:
+    for feat in cb_features:
         if feat in train_df.columns:
             available_features.append(feat)
             feature_mapping[feat] = feat
@@ -626,7 +626,7 @@ def main():
         else:
             missing_features.append(feat)
     
-    print(f"\nAvailable features: {len(available_features)}/{len(alec_features)}")
+    print(f"\nAvailable features: {len(available_features)}/{len(cb_features)}")
     if missing_features:
         print(f"Missing features ({len(missing_features)}): {list(missing_features)[:10]}...")
     
@@ -662,8 +662,8 @@ def main():
     
     # Identify categorical feature indices for CatBoost
     cat_indices = None
-    if alec_cat_features:
-        cat_feature_names = [feature_mapping.get(f, f) for f in alec_cat_features if feature_mapping.get(f, f) in actual_feature_cols]
+    if cb_cat_features:
+        cat_feature_names = [feature_mapping.get(f, f) for f in cb_cat_features if feature_mapping.get(f, f) in actual_feature_cols]
         cat_indices = [i for i, f in enumerate(actual_feature_cols) if f in cat_feature_names]
         print(f"\nCategorical features: {len(cat_indices)}/{len(actual_feature_cols)}")
     
@@ -730,8 +730,8 @@ def main():
     metadata = {
         "feature_names": best_features,
         "n_features_selected": len(best_features),
-        "alec_feature_mapping": feature_mapping,
-        "original_features": alec_features,
+        "catboost_feature_mapping": feature_mapping,
+        "original_features": cb_features,
         "missing_features": list(missing_features),
         "rfe_results": rfe_results,
         "train_ks": float(train_ks),

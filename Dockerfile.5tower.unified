@@ -10,7 +10,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY inference_server/app_5tower_unified.py app.py
 COPY ml ml
-# Copy 5-tower model only (no Alec): model.pkl, lookups/, threshold.json
+# Copy 5-tower model only (no CatBoost replica tower): model.pkl, lookups/, threshold.json
 COPY exports/multitower_sale_5towers /app/models/multitower_sale_5towers
 
 RUN mkdir -p /mnt/stage

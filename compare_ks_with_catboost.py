@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Maximize validation KS by testing configurations with Alec model included:
+Maximize validation KS by testing configurations with CatBoost model included:
 1. 5-tower baseline
-2. 6-tower (5 towers + Alec)
-3. Replace each tower with Alec (5 configurations)
+2. 6-tower (5 towers + CatBoost)
+3. Replace each tower with CatBoost (5 configurations)
 4. Optimize meta-model hyperparameters for each configuration
 """
 import sys
@@ -28,14 +28,14 @@ TARGET = "SALE_MADE_FLAG"
 EXPORT_DIR = mt5.EXPORT_DIR
 
 
-def get_alec_predictions(train_df, val_df, test_df=None):
-    """Get Alec model predictions - try loading saved predictions first, else generate."""
+def get_catboost_predictions(train_df, val_df, test_df=None):
+    """Get CatBoost model predictions - try loading saved predictions first, else generate."""
     import catboost as cb
     
     # Try loading saved predictions first
-    preds_path = REPO_ROOT / "exports" / "alec_model_replica" / "predictions_val.pkl"
+    preds_path = REPO_ROOT / "exports" / "catboost_model_replica" / "predictions_val.pkl"
     if preds_path.exists():
-        print("Loading saved Alec predictions...")
+        print("Loading saved CatBoost predictions...")
         try:
             preds = joblib.load(preds_path)
             # Check if they match our data size
@@ -48,36 +48,36 @@ def get_alec_predictions(train_df, val_df, test_df=None):
             pass
     
     # Generate predictions
-    alec_path = REPO_ROOT / "exports" / "alec_model_replica" / "model.pkl"
-    alec_meta_path = REPO_ROOT / "exports" / "alec_model_replica" / "metadata.pkl"
+    cb_model_path = REPO_ROOT / "exports" / "catboost_model_replica" / "model.pkl"
+    cb_meta_path = REPO_ROOT / "exports" / "catboost_model_replica" / "metadata.pkl"
     
-    if not alec_path.exists():
-        print(f"Alec model not found: {alec_path}")
+    if not cb_model_path.exists():
+        print(f"CatBoost model not found: {cb_model_path}")
         return None, None, None
     
-    print("Loading Alec model and generating predictions...")
-    alec_model, alec_features, _ = joblib.load(alec_path)
-    print(f"  Model has {len(alec_features)} features")
+    print("Loading CatBoost model and generating predictions...")
+    cb_model, cb_features, _ = joblib.load(cb_model_path)
+    print(f"  Model has {len(cb_features)} features")
     
     # Load metadata to get categorical feature info
     cat_feature_names = []
-    if alec_meta_path.exists():
+    if cb_meta_path.exists():
         try:
-            meta = joblib.load(alec_meta_path)
+            meta = joblib.load(cb_meta_path)
             # Try to infer categoricals from original metadata
-            alec_orig_meta = REPO_ROOT / "alecmodel" / "close_rate_model_v4_metadata.pkl"
-            if alec_orig_meta.exists():
-                orig_meta = joblib.load(alec_orig_meta)
+            cb_orig_meta = REPO_ROOT / "catboost_metadata" / "close_rate_model_v4_metadata.pkl"
+            if cb_orig_meta.exists():
+                orig_meta = joblib.load(cb_orig_meta)
                 cat_cols = orig_meta.get('cat_cols', [])
-                cat_feature_names = [f for f in alec_features if f in cat_cols]
+                cat_feature_names = [f for f in cb_features if f in cat_cols]
                 print(f"  Identified {len(cat_feature_names)} categorical features")
         except:
             pass
     
     # Check which features are available
-    available = [f for f in alec_features if f in train_df.columns]
-    missing = [f for f in alec_features if f not in train_df.columns]
-    print(f"  Available: {len(available)}/{len(alec_features)}")
+    available = [f for f in cb_features if f in train_df.columns]
+    missing = [f for f in cb_features if f not in train_df.columns]
+    print(f"  Available: {len(available)}/{len(cb_features)}")
     if missing:
         print(f"  Missing: {len(missing)} features - adding with defaults")
         # Add missing features with defaults
@@ -114,17 +114,17 @@ def get_alec_predictions(train_df, val_df, test_df=None):
     
     print("  Preparing data...")
     try:
-        X_train = prepare_df(train_df, alec_features, cat_feature_names)
-        X_val = prepare_df(val_df, alec_features, cat_feature_names)
+        X_train = prepare_df(train_df, cb_features, cat_feature_names)
+        X_val = prepare_df(val_df, cb_features, cat_feature_names)
         
         print("  Predicting...")
-        train_pred = alec_model.predict_proba(X_train)[:, 1]
-        val_pred = alec_model.predict_proba(X_val)[:, 1]
+        train_pred = cb_model.predict_proba(X_train)[:, 1]
+        val_pred = cb_model.predict_proba(X_val)[:, 1]
         
         test_pred = None
         if test_df is not None:
-            X_test = prepare_df(test_df, alec_features, cat_feature_names)
-            test_pred = alec_model.predict_proba(X_test)[:, 1]
+            X_test = prepare_df(test_df, cb_features, cat_feature_names)
+            test_pred = cb_model.predict_proba(X_test)[:, 1]
         
         # Save predictions for next time
         try:
@@ -292,18 +292,18 @@ def main():
     y_val = val_df[TARGET].astype(int).values
     y_test = test_df[TARGET].astype(int).values
     
-    # Get Alec model predictions
-    print("\nGetting Alec model predictions...")
-    alec_train, alec_val, alec_test = get_alec_predictions(train_df.copy(), val_df.copy(), test_df.copy())
-    if alec_train is None:
-        print("  Failed to get Alec predictions. Skipping Alec configurations.")
-        alec_train = None
-        alec_val = None
-        alec_test = None
+    # Get CatBoost model predictions
+    print("\nGetting CatBoost model predictions...")
+    cb_train, cb_val, cb_test = get_catboost_predictions(train_df.copy(), val_df.copy(), test_df.copy())
+    if cb_train is None:
+        print("  Failed to get CatBoost predictions. Skipping CatBoost configurations.")
+        cb_train = None
+        cb_val = None
+        cb_test = None
     else:
-        # Calculate standalone Alec KS
-        alec_ks_val, _ = ks_2samp(alec_val[y_val == 1], alec_val[y_val == 0])
-        print(f"  Alec standalone Val KS: {alec_ks_val:.4f}")
+        # Calculate standalone CatBoost KS
+        cb_ks_val, _ = ks_2samp(cb_val[y_val == 1], cb_val[y_val == 0])
+        print(f"  CatBoost standalone Val KS: {cb_ks_val:.4f}")
     
     all_results = []
     
@@ -322,13 +322,13 @@ def main():
     all_results.extend(results)
     print(f"\nBest: Val KS={best_ks:.4f}, Params: {best_params}")
     
-    # ===== CONFIGURATION 2: 6-tower (5 towers + Alec) =====
-    if alec_train is not None:
+    # ===== CONFIGURATION 2: 6-tower (5 towers + CatBoost) =====
+    if cb_train is not None:
         print("\n" + "="*70)
-        print("CONFIGURATION 2: 6-tower (5 towers + Alec)")
+        print("CONFIGURATION 2: 6-tower (5 towers + CatBoost)")
         print("="*70)
-        P_train_6tower = P_train_5tower + [alec_train]
-        P_val_6tower = P_val_5tower + [alec_val]
+        P_train_6tower = P_train_5tower + [cb_train]
+        P_val_6tower = P_val_5tower + [cb_val]
         
         X_train_meta = np.column_stack(P_train_6tower)
         X_val_meta = np.column_stack(P_val_6tower)
@@ -336,21 +336,21 @@ def main():
         print("\nOptimizing meta-model hyperparameters...")
         best_ks, best_params, results = optimize_meta_model(
             X_train_meta, y_train, X_val_meta, y_val,
-            config_name='6tower_with_alec', verbose=True
+            config_name='6tower_with_catboost', verbose=True
         )
         all_results.extend(results)
         print(f"\nBest: Val KS={best_ks:.4f}, Params: {best_params}")
         
-        # ===== CONFIGURATIONS 3-7: Replace each tower with Alec =====
+        # ===== CONFIGURATIONS 3-7: Replace each tower with CatBoost =====
         for i, tower_name in enumerate(tower_names):
             print("\n" + "="*70)
-            print(f"CONFIGURATION {i+3}: Replace {tower_name} with Alec")
+            print(f"CONFIGURATION {i+3}: Replace {tower_name} with CatBoost")
             print("="*70)
             
             P_train_replace = P_train_5tower.copy()
             P_val_replace = P_val_5tower.copy()
-            P_train_replace[i] = alec_train
-            P_val_replace[i] = alec_val
+            P_train_replace[i] = cb_train
+            P_val_replace[i] = cb_val
             
             X_train_meta = np.column_stack(P_train_replace)
             X_val_meta = np.column_stack(P_val_replace)
@@ -358,7 +358,7 @@ def main():
             print("\nOptimizing meta-model hyperparameters...")
             best_ks, best_params, results = optimize_meta_model(
                 X_train_meta, y_train, X_val_meta, y_val,
-                config_name=f'replace_{tower_name}_with_alec', verbose=True
+                config_name=f'replace_{tower_name}_with_catboost', verbose=True
             )
             all_results.extend(results)
             print(f"\nBest: Val KS={best_ks:.4f}, Params: {best_params}")
@@ -401,7 +401,7 @@ def main():
             print(f"  L1 Ratio: {best_overall['l1_ratio']:.2f}")
         
         # Save results
-        output_path = REPO_ROOT / "ks_with_alec_results.csv"
+        output_path = REPO_ROOT / "ks_with_catboost_results.csv"
         results_df = results_df.sort_values('val_KS', ascending=False)
         results_df.to_csv(output_path, index=False)
         print(f"\n  Results saved to: {output_path}")

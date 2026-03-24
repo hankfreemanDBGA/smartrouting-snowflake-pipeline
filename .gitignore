@@ -11,7 +11,7 @@ exports/
 training_tables/*.csv
 *.csv
 !training_tables/README.txt
-alecmodel/*.pkl
+catboost_metadata/*.pkl
 comprehensive_model_comparison/
 results/
 optional_scripts/**/*.csv

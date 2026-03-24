@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
 Comprehensive analysis comparing three models across feb6, feb10, and feb11 datasets:
-1. 5-tower baseline (no Alec)
-2. 5-tower with Alec replacing housing
+1. 5-tower baseline (no CatBoost tower)
+2. 5-tower with CatBoost replacing housing
 3. 3-tower drop lead
 
 For each dataset and model, runs:
@@ -43,11 +43,11 @@ MODELS = {
         "proba_col": "PREDICTION_PROBA_5tower",
         "tier_col": "tier_5tower",
     },
-    "5tower_alec": {
-        "name": "5-Tower + Alec",
+    "5tower_catboost": {
+        "name": "5-Tower + CatBoost",
         "model_dir": REPO_ROOT / "exports" / "multitower_sale_5towers_best",
-        "proba_col": "PREDICTION_PROBA_5tower_alec",
-        "tier_col": "tier_5tower_alec",
+        "proba_col": "PREDICTION_PROBA_5tower_catboost",
+        "tier_col": "tier_5tower_catboost",
     },
     "3tower_drop_lead": {
         "name": "3-Tower Drop Lead",
@@ -55,12 +55,12 @@ MODELS = {
         "proba_col": "PREDICTION_PROBA_3tower",
         "tier_col": "tier_3tower",
     },
-    "alec_standalone": {
-        "name": "Alec Standalone",
-        "model_dir": REPO_ROOT / "exports" / "alec_model_replica",
-        "proba_col": "PREDICTION_PROBA_alec",
-        "tier_col": "tier_alec",
-        "is_alec_standalone": True,
+    "catboost_standalone": {
+        "name": "CatBoost standalone",
+        "model_dir": REPO_ROOT / "exports" / "catboost_model_replica",
+        "proba_col": "PREDICTION_PROBA_catboost",
+        "tier_col": "tier_catboost",
+        "is_catboost_standalone": True,
     },
     "2tower_age_bps": {
         "name": "2-Tower (Age/Gender + BPS/Income)",
@@ -110,38 +110,38 @@ DATASETS = {
 }
 
 
-def rescore_dataset_alec_standalone(input_csv, model_key, model_config):
-    """Rescore using Alec model standalone."""
+def rescore_dataset_catboost_standalone(input_csv, model_key, model_config):
+    """Rescore using CatBoost model standalone."""
     import joblib
     
-    alec_path = model_config["model_dir"] / "model.pkl"
-    alec_meta_path = model_config["model_dir"] / "metadata.pkl"
+    cb_model_path = model_config["model_dir"] / "model.pkl"
+    cb_meta_path = model_config["model_dir"] / "metadata.pkl"
     
-    if not alec_path.exists():
-        print(f"  Error: Alec model not found at {alec_path}")
+    if not cb_model_path.exists():
+        print(f"  Error: CatBoost model not found at {cb_model_path}")
         return None
     
-    print(f"  Loading Alec model from {alec_path}")
-    alec_model, alec_features, _ = joblib.load(alec_path)
+    print(f"  Loading CatBoost model from {cb_model_path}")
+    cb_model, cb_features, _ = joblib.load(cb_model_path)
     
     # Load categorical features
-    alec_cat_features = []
-    if alec_meta_path.exists():
+    cb_cat_features = []
+    if cb_meta_path.exists():
         try:
-            alec_meta = joblib.load(alec_meta_path)
-            if isinstance(alec_meta, dict) and 'cat_cols' in alec_meta:
-                alec_cat_features = [f for f in alec_features if f in alec_meta['cat_cols']]
+            cb_meta = joblib.load(cb_meta_path)
+            if isinstance(cb_meta, dict) and 'cat_cols' in cb_meta:
+                cb_cat_features = [f for f in cb_features if f in cb_meta['cat_cols']]
         except:
             pass
     
     # Fallback: try original metadata
-    if not alec_cat_features:
-        orig_meta_path = REPO_ROOT / "alecmodel" / "close_rate_model_v4_metadata.pkl"
+    if not cb_cat_features:
+        orig_meta_path = REPO_ROOT / "catboost_metadata" / "close_rate_model_v4_metadata.pkl"
         if orig_meta_path.exists():
             try:
                 orig_meta = joblib.load(orig_meta_path)
                 if isinstance(orig_meta, dict) and 'cat_cols' in orig_meta:
-                    alec_cat_features = [f for f in alec_features if f in orig_meta['cat_cols']]
+                    cb_cat_features = [f for f in cb_features if f in orig_meta['cat_cols']]
             except:
                 pass
     
@@ -182,26 +182,26 @@ def rescore_dataset_alec_standalone(input_csv, model_key, model_config):
         try:
             feature_row = _feature_row_from_tu_response(tu_response)
             
-            # Prepare Alec features
-            alec_cats = set(alec_cat_features)
-            alec_df = pd.DataFrame(index=[0])
-            for f in alec_features:
+            # Prepare CatBoost features
+            cb_cats = set(cb_cat_features)
+            cb_df = pd.DataFrame(index=[0])
+            for f in cb_features:
                 if f in feature_row:
                     val = feature_row[f]
-                    if f in alec_cats:
-                        alec_df[f] = str(val) if val is not None and pd.notna(val) else 'MISSING'
+                    if f in cb_cats:
+                        cb_df[f] = str(val) if val is not None and pd.notna(val) else 'MISSING'
                     else:
-                        alec_df[f] = val
+                        cb_df[f] = val
                 else:
-                    alec_df[f] = 'MISSING' if f in alec_cats else 0
+                    cb_df[f] = 'MISSING' if f in cb_cats else 0
             
-            for col in alec_df.columns:
-                if col in alec_cats:
-                    alec_df[col] = alec_df[col].astype(str).replace('nan', 'MISSING').fillna('MISSING')
+            for col in cb_df.columns:
+                if col in cb_cats:
+                    cb_df[col] = cb_df[col].astype(str).replace('nan', 'MISSING').fillna('MISSING')
                 else:
-                    alec_df[col] = pd.to_numeric(alec_df[col], errors='coerce').fillna(0)
+                    cb_df[col] = pd.to_numeric(cb_df[col], errors='coerce').fillna(0)
             
-            proba = alec_model.predict_proba(alec_df)[0, 1]
+            proba = cb_model.predict_proba(cb_df)[0, 1]
             pred_val = 1 if proba >= 0.5 else 0
             
             # Assign tier
@@ -371,8 +371,8 @@ def rescore_dataset(input_csv, model_key, model_config):
         return None
     
     # Handle special cases
-    if model_config.get("is_alec_standalone"):
-        return rescore_dataset_alec_standalone(input_csv, model_key, model_config)
+    if model_config.get("is_catboost_standalone"):
+        return rescore_dataset_catboost_standalone(input_csv, model_key, model_config)
     
     if model_config.get("tower_subset"):
         return rescore_dataset_2tower(input_csv, model_key, model_config)
@@ -631,9 +631,9 @@ def create_comparison_visualizations(all_results, output_dir):
     df_results = pd.DataFrame(all_results)
     
     model_list = [("5tower_baseline", "5-Tower Baseline"),
-                  ("5tower_alec", "5-Tower + Alec"),
+                  ("5tower_catboost", "5-Tower + CatBoost"),
                   ("3tower_drop_lead", "3-Tower Drop Lead"),
-                  ("alec_standalone", "Alec Standalone"),
+                  ("catboost_standalone", "CatBoost standalone"),
                   ("2tower_age_bps", "2-Tower Age/BPS")]
     
     # 1. KS comparison
@@ -707,7 +707,7 @@ def create_comparison_visualizations(all_results, output_dir):
     heatmap_data = []
     for dataset in datasets:
         row = []
-        for model_key in ["5tower_baseline", "5tower_alec", "3tower_drop_lead", "alec_standalone", "2tower_age_bps"]:
+        for model_key in ["5tower_baseline", "5tower_catboost", "3tower_drop_lead", "catboost_standalone", "2tower_age_bps"]:
             model_data = df_results[(df_results["dataset"] == dataset) & 
                                     (df_results["model"] == model_key)]
             if len(model_data) > 0:
@@ -724,7 +724,7 @@ def create_comparison_visualizations(all_results, output_dir):
                 row.extend([0, 0, 0, 0])
         heatmap_data.append(row)
     
-    model_labels = ["5T-Base", "5T-Alec", "3T", "Alec", "2T"]
+    model_labels = ["5T-Base", "5T-CatBoost", "3T", "CatBoost", "2T"]
     # Ensure we have the right number of columns (5 models × 4 tiers = 20)
     expected_cols = len(model_labels) * len(tier_order)
     if len(heatmap_data[0]) != expected_cols:

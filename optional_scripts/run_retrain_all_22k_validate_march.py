@@ -5,15 +5,15 @@ Retrain ALL models on 22k.csv, then run the full evaluation suite on validatemar
 Steps:
   1. Build training splits from 22k.csv -> training_tables/
   2. Train 5-tower baseline -> exports/multitower_sale_5towers
-  3. Train Alec replica (uses training_tables when tuappend.csv absent) -> exports/alec_model_replica
-  4. Run KS optimization with Alec configs -> ks_with_alec_results.csv
-  5. Build best config (replace housing with Alec) -> exports/multitower_sale_5towers_best
+  3. Train CatBoost replica (uses training_tables when tuappend.csv absent) -> exports/catboost_model_replica
+  4. Run KS optimization with CatBoost configs -> ks_with_catboost_results.csv
+  5. Build best config (replace housing with CatBoost tower) -> exports/multitower_sale_5towers_best
   6. Train 4-tower custom -> exports/multitower_sale_4towers_custom
   7. Build 3-tower drop-lead from 4-tower -> exports/multitower_sale_3towers_custom_drop_lead
   8. Prepare validatemarch (extract routing_transunion_raw)
   9. Run comprehensive_model_comparison --dataset validatemarch
 
-So all six models (5tower_baseline, 5tower_alec, 3tower_drop_lead, alec_standalone,
+So all six models (5tower_baseline, 5tower_catboost, 3tower_drop_lead, catboost_standalone,
 2tower_age_bps, 4tower_drop_investments) are retrained on 22k and evaluated on validatemarch.
 
 Usage:
@@ -40,9 +40,9 @@ def run(cmd, description):
 
 
 def main():
-    # Ensure Alec trains from 22k (training_tables) not tuappend
+    # Ensure CatBoost replica trains from 22k (training_tables) not tuappend
     if TUAPPEND.exists():
-        print("Temporarily renaming tuappend.csv so Alec trains from 22k splits...")
+        print("Temporarily renaming tuappend.csv so CatBoost replica trains from 22k splits...")
         shutil.move(str(TUAPPEND), str(TUAPPEND_BAK))
         restore_tuappend = True
     else:
@@ -58,16 +58,16 @@ def main():
             "Step 2: Train 5-tower baseline on 22k",
         )
         run(
-            [sys.executable, str(REPO_ROOT / "train_alec_model_replica.py")],
-            "Step 3: Train Alec replica on 22k",
+            [sys.executable, str(REPO_ROOT / "train_catboost_model_replica.py")],
+            "Step 3: Train CatBoost replica on 22k",
         )
         run(
-            [sys.executable, str(REPO_ROOT / "compare_ks_with_alec.py")],
-            "Step 4: KS optimization with Alec configs (22k val/test/holdout)",
+            [sys.executable, str(REPO_ROOT / "compare_ks_with_catboost.py")],
+            "Step 4: KS optimization with CatBoost configs (22k val/test/holdout)",
         )
         run(
-            [sys.executable, str(REPO_ROOT / "build_best_config_model.py"), "--from-results", "--select-by", "val_KS"],
-            "Step 5: Build best config (replace housing with Alec) -> multitower_sale_5towers_best",
+            [sys.executable, str(REPO_ROOT / "build_best_config_model.py")],
+            "Step 5: Build best config (replace housing with CatBoost) -> multitower_sale_5towers_best",
         )
         run(
             [sys.executable, str(OPTIONAL / "train_multitower_sale_4towers_custom.py")],

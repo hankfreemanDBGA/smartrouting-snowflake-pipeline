@@ -23,7 +23,7 @@ except ImportError:
     pass
 
 REPO_ROOT = Path(__file__).resolve().parent
-# 5-tower only (no Alec); allow exports in parent (e.g. main repo)
+# 5-tower only (no CatBoost replica tower); allow exports in parent (e.g. main repo)
 EXPORTS_5TOWER = REPO_ROOT / "exports" / "multitower_sale_5towers"
 if not EXPORTS_5TOWER.is_dir() and (REPO_ROOT.parent / "exports" / "multitower_sale_5towers").is_dir():
     EXPORTS_5TOWER = REPO_ROOT.parent / "exports" / "multitower_sale_5towers"

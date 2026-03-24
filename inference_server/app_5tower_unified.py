@@ -210,9 +210,9 @@ _TIER_TIN = 0.45
 _TIER_BRONZE_LO = 0.45
 _TIER_BRONZE_HI = 0.55
 _TIER_GOLD = 0.80
-_alec_model = None
-_alec_features = None
-_alec_cat_features = None
+_catboost_model = None
+_catboost_features = None
+_catboost_cat_features = None
 
 
 def _tier_from_proba(proba):
@@ -262,7 +262,7 @@ def _feature_row_from_tu_response(tu_response):
 
 def _load_model():
     global _towers, _meta, _use_product_meta, _lookups, _threshold, _all_feature_names
-    global _alec_model, _alec_features, _alec_cat_features
+    global _catboost_model, _catboost_features, _catboost_cat_features
     model_dir = os.environ.get("MODEL_PATH")
     if not model_dir or not os.path.isdir(model_dir):
         model_dir = os.path.join(_REPO_ROOT, "exports", "multitower_sale_5towers")
@@ -277,48 +277,59 @@ def _load_model():
     _towers, _meta, _use_product_meta = joblib.load(pkl_path)
     _all_feature_names = []
     seen = set()
-    has_alec_tower = False
+    has_catboost_tower = False
     for _name, _m, fl in _towers:
-        if _name == 'alec':
-            has_alec_tower = True
+        if _name in ('catboost', 'alec'):
+            has_catboost_tower = True
         for c in fl:
             if c not in seen:
                 seen.add(c)
                 _all_feature_names.append(c)
     print(f"[5tower] Loaded model: {len(_towers)} towers, meta={'product' if _use_product_meta else 'logistic'}, {len(_all_feature_names)} feature names")
     
-    # Load Alec model if needed
-    if has_alec_tower:
-        alec_model_path = os.path.join(model_dir, "alec_model.pkl")
-        alec_meta_path = os.path.join(model_dir, "alec_metadata.pkl")
-        if os.path.isfile(alec_model_path):
+    # Load CatBoost replica tower weights if needed (filenames: catboost_*; legacy: alec_*)
+    if has_catboost_tower:
+        cb_model_path = os.path.join(model_dir, "catboost_model.pkl")
+        if not os.path.isfile(cb_model_path):
+            cb_model_path = os.path.join(model_dir, "alec_model.pkl")
+        cb_meta_path = os.path.join(model_dir, "catboost_metadata.pkl")
+        if not os.path.isfile(cb_meta_path):
+            cb_meta_path = os.path.join(model_dir, "alec_metadata.pkl")
+        if os.path.isfile(cb_model_path):
             try:
-                _alec_model, _alec_features, _ = joblib.load(alec_model_path)
-                _alec_cat_features = []
-                if os.path.isfile(alec_meta_path):
+                _catboost_model, _catboost_features, _ = joblib.load(cb_model_path)
+                _catboost_cat_features = []
+                if os.path.isfile(cb_meta_path):
                     try:
-                        alec_meta = joblib.load(alec_meta_path)
-                        # Try to get categorical features from metadata
-                        if isinstance(alec_meta, dict) and 'cat_cols' in alec_meta:
-                            _alec_cat_features = [f for f in _alec_features if f in alec_meta['cat_cols']]
-                    except:
+                        cb_meta = joblib.load(cb_meta_path)
+                        if isinstance(cb_meta, dict) and 'cat_cols' in cb_meta:
+                            _catboost_cat_features = [f for f in _catboost_features if f in cb_meta['cat_cols']]
+                    except Exception:
                         pass
-                # Fallback: try loading from original metadata
-                if not _alec_cat_features:
-                    orig_meta_path = os.path.join(_REPO_ROOT, "alecmodel", "close_rate_model_v4_metadata.pkl")
-                    if os.path.isfile(orig_meta_path):
-                        try:
-                            orig_meta = joblib.load(orig_meta_path)
-                            if isinstance(orig_meta, dict) and 'cat_cols' in orig_meta:
-                                _alec_cat_features = [f for f in _alec_features if f in orig_meta['cat_cols']]
-                        except:
-                            pass
-                print(f"[5tower] Loaded Alec model: {len(_alec_features)} features, {len(_alec_cat_features)} categorical")
+                if not _catboost_cat_features:
+                    for orig_meta_path in (
+                        os.path.join(_REPO_ROOT, "catboost_metadata", "close_rate_model_v4_metadata.pkl"),
+                        os.path.join(_REPO_ROOT, "alecmodel", "close_rate_model_v4_metadata.pkl"),
+                    ):
+                        if os.path.isfile(orig_meta_path):
+                            try:
+                                orig_meta = joblib.load(orig_meta_path)
+                                if isinstance(orig_meta, dict) and 'cat_cols' in orig_meta:
+                                    _catboost_cat_features = [
+                                        f for f in _catboost_features if f in orig_meta['cat_cols']
+                                    ]
+                                break
+                            except Exception:
+                                pass
+                print(
+                    f"[5tower] Loaded CatBoost replica tower: {len(_catboost_features)} features, "
+                    f"{len(_catboost_cat_features)} categorical"
+                )
             except Exception as e:
-                print(f"[5tower] Warning: Could not load Alec model: {e}")
-                _alec_model = None
+                print(f"[5tower] Warning: Could not load CatBoost replica: {e}")
+                _catboost_model = None
         else:
-            print(f"[5tower] Warning: Alec tower found but alec_model.pkl not found at {alec_model_path}")
+            print(f"[5tower] Warning: CatBoost tower in graph but no catboost_model.pkl (or legacy alec_model.pkl) at {model_dir}")
 
     lookups_dir = os.path.join(model_dir, "lookups")
     _lookups = {}
@@ -347,61 +358,59 @@ def _encode_row(df, lookups, feature_list):
     return X[0]
 
 
-def _prepare_alec_features(feature_dict):
-    """Prepare features for Alec model (CatBoost format). CatBoost cat features must be str or int, not float."""
-    global _alec_features, _alec_cat_features
-    if _alec_features is None:
+def _prepare_catboost_features(feature_dict):
+    """Prepare features for the CatBoost replica tower. CatBoost cat features must be str or int, not float."""
+    global _catboost_features, _catboost_cat_features
+    if _catboost_features is None:
         return None
     
-    alec_cats = set(_alec_cat_features or [])
-    alec_df = pd.DataFrame(index=[0])
-    for f in _alec_features:
+    cb_cats = set(_catboost_cat_features or [])
+    cb_df = pd.DataFrame(index=[0])
+    for f in _catboost_features:
         if f in feature_dict:
             val = feature_dict[f]
-            if f in alec_cats:
-                alec_df[f] = str(val) if val is not None and pd.notna(val) else 'MISSING'
+            if f in cb_cats:
+                cb_df[f] = str(val) if val is not None and pd.notna(val) else 'MISSING'
             else:
-                alec_df[f] = val
+                cb_df[f] = val
         else:
-            alec_df[f] = 'MISSING' if f in alec_cats else 0
+            cb_df[f] = 'MISSING' if f in cb_cats else 0
     
-    # Categoricals: must be string (CatBoost rejects float in cat features)
-    for col in alec_df.columns:
-        if col in alec_cats:
-            alec_df[col] = alec_df[col].astype(str).replace('nan', 'MISSING').fillna('MISSING')
+    for col in cb_df.columns:
+        if col in cb_cats:
+            cb_df[col] = cb_df[col].astype(str).replace('nan', 'MISSING').fillna('MISSING')
         else:
-            alec_df[col] = pd.to_numeric(alec_df[col], errors='coerce').fillna(0)
-    return alec_df
+            cb_df[col] = pd.to_numeric(cb_df[col], errors='coerce').fillna(0)
+    return cb_df
 
 
 def _run_predict(feature_dict):
     global _towers, _meta, _use_product_meta, _lookups, _threshold
-    global _alec_model, _alec_features
+    global _catboost_model, _catboost_features
     df = pd.DataFrame([feature_dict])
     if "SALE_MADE_FLAG" not in df.columns:
         df["SALE_MADE_FLAG"] = 0
     P_list = []
     for name, model, feat_list in _towers:
-        if name == 'alec' and _alec_model is not None:
-            # Use Alec model
-            alec_df = _prepare_alec_features(feature_dict)
-            if alec_df is not None:
+        if name in ('catboost', 'alec') and _catboost_model is not None:
+            cb_df = _prepare_catboost_features(feature_dict)
+            if cb_df is not None:
                 try:
-                    p = _alec_model.predict_proba(alec_df)[:, 1]
+                    p = _catboost_model.predict_proba(cb_df)[:, 1]
                     P_list.append(p)
                 except Exception as e:
                     err_msg = str(e)
                     if "cat_feature" in err_msg or "integer or string" in err_msg.lower():
                         try:
-                            for c in alec_df.columns:
-                                alec_df[c] = alec_df[c].astype(str).replace("nan", "MISSING").fillna("MISSING")
-                            p = _alec_model.predict_proba(alec_df)[:, 1]
+                            for c in cb_df.columns:
+                                cb_df[c] = cb_df[c].astype(str).replace("nan", "MISSING").fillna("MISSING")
+                            p = _catboost_model.predict_proba(cb_df)[:, 1]
                             P_list.append(p)
                         except Exception as e2:
-                            print(f"[5tower] Alec predict error (retry): {e2}")
+                            print(f"[5tower] CatBoost tower predict error (retry): {e2}")
                             P_list.append(np.array([0.5]))
                     else:
-                        print(f"[5tower] Alec predict error: {e}")
+                        print(f"[5tower] CatBoost tower predict error: {e}")
                         P_list.append(np.array([0.5]))
             else:
                 P_list.append(np.array([0.5]))

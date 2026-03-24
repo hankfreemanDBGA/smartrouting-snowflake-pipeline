@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Deploy 5-tower unified app with Alec best-config export (multitower_sale_5towers_best).
+Deploy 5-tower unified app with CatBoost best-config export (multitower_sale_5towers_best).
 Same as deploy_5tower_snowflake.py but uses Dockerfile.5tower.unified.best.
 
-Requires: exports/multitower_sale_5towers_best/ (run build_best_config_model.py after Alec + base training).
+Requires: exports/multitower_sale_5towers_best/ (run build_best_config_model.py after CatBoost replica + base training).
 """
 
 from __future__ import annotations
@@ -62,7 +62,7 @@ def main() -> None:
     if not EXPORTS_BEST.is_dir():
         print(
             f"ERROR: {EXPORTS_BEST} not found. Run train_multitower_sale_5towers.py, "
-            "train_alec_model_replica.py, then build_best_config_model.py.",
+            "train_catboost_model_replica.py, then build_best_config_model.py.",
             file=sys.stderr,
         )
         sys.exit(1)
@@ -78,7 +78,7 @@ def main() -> None:
         print(f"ERROR: {DOCKERFILE} not found.", file=sys.stderr)
         sys.exit(1)
 
-    print("\n--- 1. Build 5-tower unified image (best config: Alec replaces housing) ---")
+    print("\n--- 1. Build 5-tower unified image (best config: CatBoost tower replaces housing) ---")
     run([
         "docker", "build", "--platform", "linux/amd64",
         "-f", str(DOCKERFILE),
